@@ -7,12 +7,13 @@ import sys
 import termios
 import tty
 import time
+import signal
 from rich.console import Console
 from rich.text import Text
 
 # Map constants
 WIDTH = 40
-HEIGHT = 20
+HEIGHT = 15
 VISION_RADIUS = 3
 TORCH_RADIUS = 3
 TORCH_COUNT = 3
@@ -25,12 +26,18 @@ EXIT = 'E'
 TORCH = '!'
 FOG = ' '
 
-# Directions
+# Arrow key escape sequences
+UP = '\x1b[A'
+DOWN = '\x1b[B'
+LEFT = '\x1b[D'
+RIGHT = '\x1b[C'
+
+# Directions (now using arrow key sequences)
 DIRS = {
-    'w': (-1, 0),
-    's': (1, 0),
-    'a': (0, -1),
-    'd': (0, 1),
+    UP: (-1, 0),
+    DOWN: (1, 0),
+    LEFT: (0, -1),
+    RIGHT: (0, 1),
 }
 
 console = Console()
@@ -53,6 +60,7 @@ class Game:
         self.has_treasure = False
         self.message = None  # Current game message
         self.message_style = "white"  # Style for the current message
+        self.running = True  # Flag to control the game loop
 
     def generate_map(self):
         grid = [[FLOOR for _ in range(WIDTH)] for _ in range(HEIGHT)]
@@ -153,7 +161,7 @@ class Game:
             console.print("[bold green]You have the treasure! Find the exit![/bold green]")
 
         # Add controls and legend
-        console.print("[dim]Controls: [WASD] move  [Enter] drop torch  [Q] quit[/dim]")
+        console.print("[dim]Controls: [↑↓←→] move  [A] drop torch  [Ctrl+C] quit[/dim]")
         console.print("[dim]Legend: [bold yellow]@[/bold yellow] you  [bold red]![/bold red] torch  [bold magenta]K[/bold magenta] key  [bold cyan]E[/bold cyan] exit[/dim]")
 
     def move(self, dy, dx):
@@ -191,6 +199,8 @@ class Game:
         try:
             tty.setraw(fd)
             ch = sys.stdin.read(1)
+            if ch == '\x1b':  # Arrow key prefix
+                ch += sys.stdin.read(2)  # Read the rest of the arrow key sequence
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return ch
@@ -204,7 +214,7 @@ class Game:
         console.print("[dim italic]Each light you leave behind is one step closer to the dark.[/dim italic]", justify="center")
         console.print("[dim italic]Three ghost-guarded keys must be found to unlock the way out.[/dim italic]", justify="center")
         console.print("", justify="center")
-        console.print("[bold][Press Space to Begin][/bold]", justify="center")
+        console.print("[bold][Press 'B' to Begin][/bold]", justify="center")
         while True:
             key = self.getch()
             if key == ' ':
@@ -217,18 +227,21 @@ class Game:
         self.message = text
         self.message_style = style
 
+    def handle_sigint(self, signum, frame):
+        self.running = False
+        console.print("\n[bold red]Game Over![/bold red]")
+        sys.exit(0)
+
 def main():
     game = Game()
+    signal.signal(signal.SIGINT, game.handle_sigint)
     game.title_screen()
     
-    while True:
+    while game.running:
         game.render()
         cmd = game.getch()
         
-        if cmd == 'q':
-            console.print("[bold red]Game Over![/bold red]")
-            break
-        elif cmd in DIRS:
+        if cmd in DIRS:
             game.move(*DIRS[cmd])
         elif game.checkEnter(cmd):
             game.place_torch()
