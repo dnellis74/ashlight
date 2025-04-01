@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Ash Light - A terminal dungeon crawler
 
 import os
@@ -10,8 +11,8 @@ from rich.console import Console
 from rich.text import Text
 
 # Map constants
-WIDTH = 20
-HEIGHT = 10
+WIDTH = 40
+HEIGHT = 20
 VISION_RADIUS = 3
 TORCH_RADIUS = 3
 TORCH_COUNT = 3
@@ -19,7 +20,7 @@ TORCH_COUNT = 3
 WALL = '#'
 FLOOR = '.'
 PLAYER = '@'
-TREASURE = 'T'
+TREASURE = 'K'  # now represents keys
 EXIT = 'E'
 TORCH = '!'
 FOG = ' '
@@ -46,9 +47,12 @@ class Game:
         self.treasure_pos = None
         self.exit_pos = None
         self.player_pos = self.random_empty()
-        self.treasure_pos = self.random_empty()
+        self.treasure_pos = [self.random_empty() for _ in range(3)]
+        self.collected_treasures = set()
         self.exit_pos = self.random_empty()
         self.has_treasure = False
+        self.message = None  # Current game message
+        self.message_style = "white"  # Style for the current message
 
     def generate_map(self):
         grid = [[FLOOR for _ in range(WIDTH)] for _ in range(HEIGHT)]
@@ -114,11 +118,13 @@ class Game:
         for y in range(HEIGHT):
             row = Text()
             for x in range(WIDTH):
-                if self.visible[y][x]:
+                # Always show the player if they're at this position
+                if (y, x) == self.player_pos:
+                    row.append(PLAYER, style="bold yellow")
+                # If tile is currently visible due to torch or player light
+                elif self.visible[y][x]:
                     style = self.get_tile_style(y, x)
-                    if (y, x) == self.player_pos:
-                        row.append(PLAYER, style="bold yellow")
-                    elif (y, x) == self.treasure_pos and not self.has_treasure:
+                    if (y, x) in self.treasure_pos and (y, x) not in self.collected_treasures:
                         row.append(TREASURE, style="bold magenta")
                     elif (y, x) == self.exit_pos:
                         row.append(EXIT, style="bold cyan")
@@ -127,32 +133,49 @@ class Game:
                     else:
                         tile = self.map[y][x]
                         row.append(tile, style=style)
+                # If tile has been seen before, draw it in dim memory
                 elif self.seen[y][x]:
                     tile = self.map[y][x]
                     if tile == WALL or tile == FLOOR:
                         row.append(tile, style="grey23")
                     else:
                         row.append(FOG, style="dim")
+                # Tile has never been seen
                 else:
                     row.append(FOG, style="dim")
             console.print(row)
         console.print(f"[bold]Torches left:[/bold] {self.torch_count}")
-        if self.has_treasure:
+        
+        # Display game messages in a consistent location
+        if self.message:
+            console.print(f"[{self.message_style}]{self.message}[/{self.message_style}]")
+        elif self.has_treasure:
             console.print("[bold green]You have the treasure! Find the exit![/bold green]")
 
         # Add controls and legend
-        console.print("[dim]Controls: [WASD] move  [T] or [Enter] drop torch  [Q] quit[/dim]")
-        console.print("[dim]Legend: [bold yellow]@[/bold yellow] you  [bold red]![/bold red] torch  [bold magenta]T[/bold magenta] treasure  [bold cyan]E[/bold cyan] exit[/dim]")
+        console.print("[dim]Controls: [WASD] move  [Enter] drop torch  [Q] quit[/dim]")
+        console.print("[dim]Legend: [bold yellow]@[/bold yellow] you  [bold red]![/bold red] torch  [bold magenta]K[/bold magenta] key  [bold cyan]E[/bold cyan] exit[/dim]")
 
     def move(self, dy, dx):
         ny, nx = self.player_pos[0] + dy, self.player_pos[1] + dx
         if self.in_bounds(ny, nx) and self.map[ny][nx] != WALL:
+            old_pos = self.player_pos
             self.player_pos = (ny, nx)
-            if self.player_pos == self.treasure_pos:
-                self.has_treasure = True
+            
+            # Handle key collection
+            if self.player_pos in self.treasure_pos and self.player_pos not in self.collected_treasures:
+                self.collected_treasures.add(self.player_pos)
+                self.set_message(f"You found a key! ({len(self.collected_treasures)}/3)", "bold magenta")
+                if len(self.collected_treasures) == 2:
+                    self.set_message("You hear a distant wail... Something ancient has stirred.\nThe dead do not rest easy in this place. And now, they know you're here.", "bold red")
+                if len(self.collected_treasures) == 3:
+                    self.has_treasure = True
+                    self.set_message("You have all three keys! The exit is now your only hope.", "bold green")
+            
+            # Handle exit with treasure
             elif self.player_pos == self.exit_pos and self.has_treasure:
-                self.render()
-                console.print("[bold green]You escaped with the treasure! Victory![/bold green]")
+                self.set_message("You escaped with the treasure! Victory!", "bold green")
+                time.sleep(2)  # Give player time to see the victory message
                 sys.exit(0)
 
     def place_torch(self):
@@ -179,6 +202,7 @@ class Game:
         console.print("[dim italic]The fire is fading...[/dim italic]", justify="center")
         console.print("[dim italic]You descend with only a few embers in hand.[/dim italic]", justify="center")
         console.print("[dim italic]Each light you leave behind is one step closer to the dark.[/dim italic]", justify="center")
+        console.print("[dim italic]Three ghost-guarded keys must be found to unlock the way out.[/dim italic]", justify="center")
         console.print("", justify="center")
         console.print("[bold][Press Space to Begin][/bold]", justify="center")
         while True:
@@ -186,18 +210,28 @@ class Game:
             if key == ' ':
                 break
 
-    def run(self):
-        self.title_screen()
-        while True:
-            self.render()
-            cmd = self.getch().lower()
-            if cmd in DIRS:
-                self.move(*DIRS[cmd])
-            elif cmd == 't' or cmd == '\r':
-                self.place_torch()
-            elif cmd == 'q':
-                print("Goodbye.")
-                break
+    def checkEnter(self, cmd):
+        return ord(cmd) in (10, 13)
 
-if __name__ == '__main__':
-    Game().run()
+    def set_message(self, text, style="white"):
+        self.message = text
+        self.message_style = style
+
+def main():
+    game = Game()
+    game.title_screen()
+    
+    while True:
+        game.render()
+        cmd = game.getch()
+        
+        if cmd == 'q':
+            console.print("[bold red]Game Over![/bold red]")
+            break
+        elif cmd in DIRS:
+            game.move(*DIRS[cmd])
+        elif game.checkEnter(cmd):
+            game.place_torch()
+
+if __name__ == "__main__":
+    main()
