@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.text import Text
 
 # Map constants
-WIDTH = 40
+WIDTH = 54
 HEIGHT = 15
 VISION_RADIUS = 3
 TORCH_RADIUS = 3
@@ -61,6 +61,7 @@ class Game:
         self.message = None  # Current game message
         self.message_style = "white"  # Style for the current message
         self.running = True  # Flag to control the game loop
+        self.old_termios = None
 
     def generate_map(self):
         grid = [[FLOOR for _ in range(WIDTH)] for _ in range(HEIGHT)]
@@ -121,7 +122,6 @@ class Game:
 
     def render(self):
         os.system('cls' if os.name == 'nt' else 'clear')
-        console.print("[bold]Ash Light[/bold] - Find the treasure and escape. Don't lose your last light.\n")
         self.update_visibility()
         for y in range(HEIGHT):
             row = Text()
@@ -175,7 +175,9 @@ class Game:
                 self.collected_treasures.add(self.player_pos)
                 self.set_message(f"You found a key! ({len(self.collected_treasures)}/3)", "bold magenta")
                 if len(self.collected_treasures) == 2:
-                    self.set_message("You hear a distant wail... Something ancient has stirred.\nThe dead do not rest easy in this place. And now, they know you're here.", "bold red")
+                    self.set_message("You hear a distant wail... Something ancient has stirred.")
+                    time.sleep(3)
+                    self.set_message("The dead do not rest easy in this place. And now, they know you're here.", "bold red")
                 if len(self.collected_treasures) == 3:
                     self.has_treasure = True
                     self.set_message("You have all three keys! The exit is now your only hope.", "bold green")
@@ -195,14 +197,14 @@ class Game:
 
     def getch(self):
         fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
+        self.old_termios = termios.tcgetattr(fd)
         try:
             tty.setraw(fd)
             ch = sys.stdin.read(1)
             if ch == '\x1b':  # Arrow key prefix
                 ch += sys.stdin.read(2)  # Read the rest of the arrow key sequence
         finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            termios.tcsetattr(fd, termios.TCSADRAIN, self.old_termios)
         return ch
 
     def title_screen(self):
@@ -228,23 +230,32 @@ class Game:
         self.message_style = style
 
     def handle_sigint(self, signum, frame):
-        self.running = False
+        # Restore terminal settings before exiting
+        fd = sys.stdin.fileno()
+        termios.tcsetattr(fd, termios.TCSADRAIN, self.old_termios)
         console.print("\n[bold red]Game Over![/bold red]")
-        sys.exit(0)
+        sys.exit(0)  # Immediately exit the program
 
 def main():
     game = Game()
     signal.signal(signal.SIGINT, game.handle_sigint)
     game.title_screen()
     
-    while game.running:
-        game.render()
-        cmd = game.getch()
-        
-        if cmd in DIRS:
-            game.move(*DIRS[cmd])
-        elif game.checkEnter(cmd):
-            game.place_torch()
+    try:
+        while game.running:
+            game.render()
+            cmd = game.getch()
+            
+            if cmd in DIRS:
+                game.move(*DIRS[cmd])
+            elif game.checkEnter(cmd):
+                game.place_torch()
+    except KeyboardInterrupt:
+        console.print("\n[bold red]Game Over![/bold red]")
+    finally:
+        # Clean up terminal state
+        console.print("\nThanks for playing!")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
